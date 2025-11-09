@@ -1,0 +1,102 @@
+name: GitHub Crawler
+
+on:
+  workflow_dispatch:        # allows manual trigger
+  schedule:
+    - cron: "0 0 * * *"     # optional: run daily at midnight UTC
+
+jobs:
+  crawl-stars:
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: testdb
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    env:
+      DATABASE_URL: postgres://postgres:postgres@localhost:5432/testdb
+      GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+    steps:
+      # ----------------------------
+      # 1️⃣ Checkout the repository
+      # ----------------------------
+      - name: Checkout code
+        uses: actions/checkout@v5
+
+      # ----------------------------
+      # 2️⃣ Set up Python
+      # ----------------------------
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      # ----------------------------
+      # 3️⃣ Install dependencies
+      # ----------------------------
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install psycopg2-binary requests
+
+      # ----------------------------
+      # 4️⃣ Wait for Postgres
+      # ----------------------------
+      - name: Wait for Postgres to be ready
+        run: |
+          echo "Waiting for PostgreSQL to start..."
+          for i in {1..10}; do
+            pg_isready -h localhost -p 5432 -U postgres && break
+            echo "Postgres not ready yet... ($i/10)"
+            sleep 5
+          done
+
+      # ----------------------------
+      # 5️⃣ Create schema
+      # ----------------------------
+      - name: Create schema
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL || 'postgresql://postgres:postgres@localhost:5432/testdb' }}
+        run: |
+          echo "Creating database schema..."
+          psql $DATABASE_URL -f setup_schema.sql
+
+      # ----------------------------
+      # 6️⃣ Run crawler
+      # ----------------------------
+      - name: Run crawl_stars.py
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          DATABASE_URL: ${{ secrets.DATABASE_URL || 'postgresql://postgres:postgres@localhost:5432/testdb' }}
+        run: python crawl_stars.py
+
+      # ----------------------------
+      # 7️⃣ Export DB contents to CSV
+      # ----------------------------
+      - name: Export repository data
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL || 'postgresql://postgres:postgres@localhost:5432/testdb' }}
+        run: |
+          echo "Exporting data to repositories.csv"
+          psql "$DATABASE_URL" -c "\COPY repositories TO 'repositories.csv' CSV HEADER"
+
+      # ----------------------------
+      # 8️⃣ Upload results as artifact
+      # ----------------------------
+      - name: Upload repository CSV
+        uses: actions/upload-artifact@v4
+        with:
+          name: github-repositories
+          path: repositories.csv
