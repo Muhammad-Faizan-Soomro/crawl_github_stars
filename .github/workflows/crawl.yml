@@ -64,16 +64,6 @@ jobs:
           done
 
       # ----------------------------
-      # 5️⃣ Create schema
-      # ----------------------------
-      - name: Create schema
-        env:
-          DATABASE_URL: ${{ secrets.DATABASE_URL || 'postgresql://postgres:postgres@localhost:5432/testdb' }}
-        run: |
-          echo "Creating database schema..."
-          psql $DATABASE_URL -f setup_schema.sql
-
-      # ----------------------------
       # 6️⃣ Run crawler
       # ----------------------------
       - name: Run crawl_stars.py
