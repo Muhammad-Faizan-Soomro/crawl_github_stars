@@ -7,18 +7,6 @@ def get_connection(db_url: str):
     conn.autocommit = True
     return conn
 
-def setup_schema(conn):
-    schema_file = os.path.join(os.path.dirname(__file__), "schema.sql")
-    if not os.path.exists(schema_file):
-        print("⚠️ Schema file not found. Skipping setup.")
-        return
-
-    with open(schema_file, "r", encoding="utf-8") as f:
-        sql = f.read()
-    with conn.cursor() as cur:
-        cur.execute(sql)
-    print("🧱 Schema created successfully.")
-
 def upsert_repos(conn, repo_list):
     if not repo_list:
         return
