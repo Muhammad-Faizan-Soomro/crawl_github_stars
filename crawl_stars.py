@@ -72,6 +72,35 @@ def setup_schema(conn):
 # ------------------------------
 
 def graphql_query(query, variables=None, retries=3):
+    for attempt in range(retries):
+        headers = {"Authorization": f"Bearer {GITHUB_TOKEN}"}
+        response = requests.post(GRAPHQL_API_URL, json={"query": query, "variables": variables}, headers=headers)
+        
+        if response.status_code == 200:
+            result = response.json()
+
+            # ✅ Check GitHub rate limit
+            rate_info = result.get("data", {}).get("rateLimit", {})
+            remaining = rate_info.get("remaining")
+            reset_at = rate_info.get("resetAt")
+
+            if remaining is not None and remaining < 10:
+                # Sleep until reset
+                reset_seconds = (datetime.fromisoformat(reset_at[:-1]) - datetime.utcnow()).total_seconds()
+                print(f"⏳ Rate limit nearly exhausted, sleeping for {int(reset_seconds)} seconds...")
+                time.sleep(max(0, reset_seconds))
+            
+            return result
+
+        elif response.status_code == 403:
+            print(f"⚠️ Rate limit hit (403), sleeping for 60s...")
+            time.sleep(60)
+
+        else:
+            print(f"Request failed ({response.status_code}), retrying in {2 ** attempt}s...")
+            time.sleep(2 ** attempt)
+
+    raise Exception(f"GraphQL query failed after {retries} attempts")
     headers = {
         "Authorization": f"Bearer {GITHUB_TOKEN}",
         "Accept": "application/vnd.github.v4+json"
