@@ -124,17 +124,30 @@ def graphql_query(query, variables=None, retries=5):
 # PARTITIONED SEARCH
 # ------------------------------
 
+# def generate_search_queries():
+#     queries = []
+#     for year in range(2008, 2025):
+#         for month in range(1, 13):
+#             start = f"{year}-{month:02d}-01"
+#             if month == 12:
+#                 end = f"{year}-12-31"
+#             else:
+#                 end = f"{year}-{month+1:02d}-01"
+#             query_str = f"created:{start}..{end}"
+#             queries.append(query_str)
+#     return queries
+
 def generate_search_queries():
     queries = []
-    for year in range(2008, 2025):
-        for month in range(1, 13):
-            start = f"{year}-{month:02d}-01"
-            if month == 12:
-                end = f"{year}-12-31"
-            else:
-                end = f"{year}-{month+1:02d}-01"
-            query_str = f"created:{start}..{end}"
-            queries.append(query_str)
+    start_date = datetime(2008, 1, 1)
+    end_date = datetime(2024, 12, 31)
+
+    current = start_date
+    while current < end_date:
+        next_day = current + timedelta(days=1)
+        query_str = f"created:{current.date()}..{next_day.date() - timedelta(days=1)}"
+        queries.append(query_str)
+        current = next_day
     return queries
 
 # ------------------------------
@@ -147,7 +160,7 @@ def fetch_repos_from_search(query_string, first=100, after_cursor=None):
     """
     graphql_query_string = """
     query ($query: String!, $first: Int!, $after: String) {
-      search(query: $query, type: REPOSITORY, first: $first, after: $after) {
+      search(query: $query + " fork:false", type: REPOSITORY, first: $first, after: $after) {
         pageInfo {
           hasNextPage
           endCursor
@@ -225,15 +238,24 @@ def main(target_repos=100000, batch_size=100):
         after_cursor = None
 
         while has_next and total_fetched < target_repos:
-            data = fetch_repos_from_search(query_str, first=batch_size, after_cursor=after_cursor)
+            try:
+                data = fetch_repos_from_search(query_str, first=batch_size, after_cursor=after_cursor)
+            except Exception as e:
+                print(f"⚠️ Error fetching query '{query_str}': {e}")
+                break  # Skip this query after repeated failures
+
             nodes = data["search"]["nodes"]
             page_info = data["search"]["pageInfo"]
 
-            # Prepare for database
+            # Remove duplicates within this batch
+            seen_ids = set()
             repo_list = []
             for node in nodes:
+                if node["id"] in seen_ids:
+                    continue
+                seen_ids.add(node["id"])
                 repo_list.append({
-                    "id": node["id"],  # GitHub node_id
+                    "id": node["id"],
                     "name": node["name"],
                     "owner": node["owner"]["login"],
                     "stars_count": node["stargazerCount"]
