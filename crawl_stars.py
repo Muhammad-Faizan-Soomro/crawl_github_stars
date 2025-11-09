@@ -124,19 +124,6 @@ def graphql_query(query, variables=None, retries=5):
 # PARTITIONED SEARCH
 # ------------------------------
 
-# def generate_search_queries():
-#     queries = []
-#     for year in range(2008, 2025):
-#         for month in range(1, 13):
-#             start = f"{year}-{month:02d}-01"
-#             if month == 12:
-#                 end = f"{year}-12-31"
-#             else:
-#                 end = f"{year}-{month+1:02d}-01"
-#             query_str = f"created:{start}..{end}"
-#             queries.append(query_str)
-#     return queries
-
 def generate_search_queries():
     queries = []
     start_date = datetime(2008, 1, 1)
@@ -240,6 +227,9 @@ def main(target_repos=100000, batch_size=100):
         after_cursor = None
 
         while has_next and total_fetched < target_repos:
+            # Adjust batch size to not exceed target
+            current_batch_size = min(batch_size, target_repos - total_fetched)
+
             try:
                 data = fetch_repos_from_search(query_str, first=batch_size, after_cursor=after_cursor)
             except Exception as e:
@@ -262,6 +252,10 @@ def main(target_repos=100000, batch_size=100):
                     "owner": node["owner"]["login"],
                     "stars_count": node["stargazerCount"]
                 })
+
+            # Trim repo_list if this batch exceeds target
+            if total_fetched + len(repo_list) > target_repos:
+                repo_list = repo_list[: target_repos - total_fetched]
 
             # Insert/update in DB
             upsert_repos(conn, repo_list)
