@@ -158,9 +158,11 @@ def fetch_repos_from_search(query_string, first=100, after_cursor=None):
     """
     Fetches a page of repositories from GraphQL search API.
     """
+    query_string = query_string + " fork:false"
+
     graphql_query_string = """
     query ($query: String!, $first: Int!, $after: String) {
-      search(query: $query + " fork:false", type: REPOSITORY, first: $first, after: $after) {
+      search(query: $query, type: REPOSITORY, first: $first, after: $after) {
         pageInfo {
           hasNextPage
           endCursor
