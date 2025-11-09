@@ -5,6 +5,7 @@ import math
 import requests
 import psycopg2
 from psycopg2.extras import execute_values
+from psycopg2 import sql
 from datetime import datetime, timezone, timedelta
 from dotenv import load_dotenv
 
@@ -15,7 +16,7 @@ load_dotenv()
 # ------------------------------
 
 GITHUB_TOKEN = os.getenv("GITHUB_TOKEN")
-DB_URL = os.getenv("DATABASE_URL")  # Example: postgres://user:pass@host:port/dbname
+DB_URL = os.getenv("DATABASE_URL")
 
 if not GITHUB_TOKEN or not DB_URL:
     print("Please set GITHUB_TOKEN and DATABASE_URL environment variables")
@@ -24,12 +25,47 @@ if not GITHUB_TOKEN or not DB_URL:
 GRAPHQL_API_URL = "https://api.github.com/graphql"
 
 # ------------------------------
-# DATABASE CONNECTION
+# DATABASE CONNECTION + SCHEMA SETUP
 # ------------------------------
 
 def get_db_connection():
-    conn = psycopg2.connect(DB_URL)
-    return conn
+    """Create a database connection and ensure schema is set up."""
+    try:
+        # Connect to the database
+        conn = psycopg2.connect(DB_URL)
+        conn.autocommit = True
+        print("✅ Connected to database successfully.")
+
+        # Execute schema file (setup_schema.sql)
+        setup_schema(conn)
+
+        return conn
+
+    except psycopg2.Error as e:
+        print("❌ Database connection failed:", e)
+        raise
+
+
+def setup_schema(conn):
+    """Execute SQL commands from setup_schema.sql file to create tables."""
+    schema_file = "./setup_schema.sql"
+
+    # Check if file exists
+    if not os.path.exists(schema_file):
+        print(f"⚠️ Schema file '{schema_file}' not found. Skipping schema setup.")
+        return
+
+    try:
+        with open(schema_file, "r", encoding="utf-8") as f:
+            schema_sql = f.read()
+
+        with conn.cursor() as cur:
+            cur.execute(schema_sql)
+            print("🧱 Schema setup completed successfully.")
+
+    except psycopg2.Error as e:
+        print("❌ Error executing schema file:", e)
+        raise
 
 # ------------------------------
 # HELPER FUNCTIONS
