@@ -71,29 +71,47 @@ def setup_schema(conn):
 # HELPER FUNCTIONS
 # ------------------------------
 
-def graphql_query(query, variables=None, retries=3):
+def graphql_query(query, variables=None, retries=5):
     for attempt in range(retries):
-        headers = {"Authorization": f"Bearer {GITHUB_TOKEN}"}
+        headers = {
+            "Authorization": f"Bearer {GITHUB_TOKEN}",
+            "Accept": "application/vnd.github.v4+json"
+        }
         response = requests.post(GRAPHQL_API_URL, json={"query": query, "variables": variables}, headers=headers)
-        
+
         if response.status_code == 200:
             result = response.json()
 
-            # ✅ Check GitHub rate limit
-            rate_info = result.get("data", {}).get("rateLimit", {})
-            remaining = rate_info.get("remaining")
-            reset_at = rate_info.get("resetAt")
+            # Handle API-level errors
+            if "errors" in result:
+                for error in result["errors"]:
+                    if error.get("type") == "RATE_LIMITED":
+                        reset_at = result.get("data", {}).get("rateLimit", {}).get("resetAt")
+                        if reset_at:
+                            reset_dt = datetime.fromisoformat(reset_at.replace("Z", "+00:00"))
+                            sleep_seconds = (reset_dt - datetime.now(timezone.utc)).total_seconds() + 5
+                            print(f"⏳ Rate limit hit. Sleeping for {int(sleep_seconds)}s...")
+                            time.sleep(max(0, sleep_seconds))
+                            break
+                else:
+                    raise Exception(f"GraphQL errors: {result['errors']}")
+                continue
 
-            if remaining is not None and remaining < 10:
-                # Sleep until reset
-                reset_seconds = (datetime.fromisoformat(reset_at[:-1]) - datetime.utcnow()).total_seconds()
-                print(f"⏳ Rate limit nearly exhausted, sleeping for {int(reset_seconds)} seconds...")
-                time.sleep(max(0, reset_seconds))
-            
+            # Check remaining quota
+            rate_info = result.get("data", {}).get("rateLimit")
+            if rate_info:
+                remaining = rate_info.get("remaining", 1)
+                reset_at = rate_info.get("resetAt")
+                if remaining < 10 and reset_at:
+                    reset_dt = datetime.fromisoformat(reset_at.replace("Z", "+00:00"))
+                    sleep_seconds = (reset_dt - datetime.now(timezone.utc)).total_seconds() + 5
+                    print(f"⏳ Low rate limit ({remaining}). Sleeping for {int(sleep_seconds)}s...")
+                    time.sleep(max(0, sleep_seconds))
+
             return result
 
         elif response.status_code == 403:
-            print(f"⚠️ Rate limit hit (403), sleeping for 60s...")
+            print("⚠️ HTTP 403 received. Sleeping 60s...")
             time.sleep(60)
 
         else:
@@ -101,82 +119,22 @@ def graphql_query(query, variables=None, retries=3):
             time.sleep(2 ** attempt)
 
     raise Exception(f"GraphQL query failed after {retries} attempts")
-    headers = {
-        "Authorization": f"Bearer {GITHUB_TOKEN}",
-        "Accept": "application/vnd.github.v4+json"
-    }
-
-    for attempt in range(retries):
-        response = requests.post(
-            GRAPHQL_API_URL,
-            json={"query": query, "variables": variables},
-            headers=headers
-        )
-
-        # Check for HTTP-level errors
-        if response.status_code != 200:
-            print(f"Request failed ({response.status_code}), retrying in {2 ** attempt}s...")
-            time.sleep(2 ** attempt)
-            continue
-
-        result = response.json()
-
-        # Handle API-level errors
-        if "errors" in result:
-            for error in result["errors"]:
-                # Explicit rate limit hit
-                if error.get("type") == "RATE_LIMITED":
-                    reset_at = None
-                    # Try to parse resetAt from any rateLimit field if available
-                    try:
-                        reset_at = result["data"]["rateLimit"]["resetAt"]
-                    except Exception:
-                        pass
-                    if reset_at:
-                        reset_dt = datetime.fromisoformat(reset_at.replace("Z", "+00:00"))
-                        sleep_for = (reset_dt - datetime.now(timezone.utc)).total_seconds()
-                    else:
-                        sleep_for = 60  # fallback
-                    sleep_for = max(0, sleep_for)
-                    print(f"Rate limit hit. Sleeping for {sleep_for:.1f} seconds...")
-                    time.sleep(sleep_for)
-                    break  # retry after sleep
-            else:
-                raise Exception(f"GraphQL errors: {result['errors']}")
-            continue  # retry outer loop after sleeping
-
-        # Extract rate limit info from response
-        rate_info = result.get("data", {}).get("rateLimit")
-        if rate_info:
-            remaining = rate_info.get("remaining", 1)
-            reset_at = rate_info.get("resetAt")
-            if remaining < 50 and reset_at:
-                reset_dt = datetime.fromisoformat(reset_at.replace("Z", "+00:00"))
-                sleep_for = (reset_dt - datetime.now(timezone.utc)).total_seconds()
-                sleep_for = max(0, sleep_for)
-                print(f"Low rate limit remaining ({remaining}). Sleeping until reset ({sleep_for:.1f}s)...")
-                time.sleep(sleep_for)
-
-        # Success path — return result
-        return result
-
-    # If all retries failed
-    raise Exception(f"GraphQL query failed after {retries} attempts")
 
 # ------------------------------
 # PARTITIONED SEARCH
 # ------------------------------
 
-# GitHub Search API only returns first 1000 results per query
-# So we partition by repository creation date
-def generate_search_queries(target_count=100000, partition_size=1000):
-    # Example partition: created:>=2010-01-01 created:<2011-01-01
-    # For simplicity, we can partition by year
-    years = list(range(2008, 2024))  # Adjust range if needed
+def generate_search_queries():
     queries = []
-    for i in range(len(years) - 1):
-        query_str = f"created:{years[i]}-01-01..{years[i+1]-1}-12-31"
-        queries.append(query_str)
+    for year in range(2008, 2025):
+        for month in range(1, 13):
+            start = f"{year}-{month:02d}-01"
+            if month == 12:
+                end = f"{year}-12-31"
+            else:
+                end = f"{year}-{month+1:02d}-01"
+            query_str = f"created:{start}..{end}"
+            queries.append(query_str)
     return queries
 
 # ------------------------------
